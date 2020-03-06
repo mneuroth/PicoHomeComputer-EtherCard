@@ -1,4 +1,7 @@
 #include <stdarg.h>
+#if defined(ARDUINO_ARCH_PIC32)  // or __PIC32 or PIC32 or __PIC32MX__
+#include <Arduino.h>
+#endif
 #include <avr/eeprom.h>
 
 #include "stash.h"
@@ -297,4 +300,3 @@ void Stash::cleanup () {
         }
     }
 }
-
