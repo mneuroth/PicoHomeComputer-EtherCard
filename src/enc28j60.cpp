@@ -18,6 +18,9 @@
 uint16_t ENC28J60::bufferSize;
 bool ENC28J60::broadcast_enabled = false;
 bool ENC28J60::promiscuous_enabled = false;
+#if defined(ARDUINO_ARCH_PIC32)  // or __PIC32 or PIC32 or __PIC32MX__
+bool ENC28J60::isInitialized = false;
+#endif
 
 // ENC28J60 Control Registers
 // Control register definitions are a combination of address,
@@ -231,6 +234,11 @@ bool ENC28J60::promiscuous_enabled = false;
 static byte Enc28j60Bank;
 static byte selectPin;
 
+#if defined(ARDUINO_ARCH_PIC32)  // or __PIC32 or PIC32 or __PIC32MX__
+#include <SoftSPI.h>
+SoftSPI SPI(4,MOSI,MISO,SCK);
+#endif
+
 void ENC28J60::initSPI () {
     pinMode(SS, OUTPUT);
     digitalWrite(SS, HIGH);
@@ -242,19 +250,51 @@ void ENC28J60::initSPI () {
     digitalWrite(MOSI, LOW);
     digitalWrite(SCK, LOW);
 
+#if defined(ARDUINO_ARCH_PIC32)  // or __PIC32 or PIC32 or __PIC32MX__
+    SPI.begin();
+    isInitialized = true;
+#else // AVR    
     SPCR = bit(SPE) | bit(MSTR); // 8 MHz @ 16
     bitSet(SPSR, SPI2X);
+#endif
 }
 
 static void enableChip () {
+#if defined(ARDUINO_ARCH_PIC32)  // or __PIC32 or PIC32 or __PIC32MX__
+    noInterrupts(); 
+#else // AVR
     cli();
+#endif
     digitalWrite(selectPin, LOW);
 }
 
 static void disableChip () {
     digitalWrite(selectPin, HIGH);
+#if defined(ARDUINO_ARCH_PIC32)  // or __PIC32 or PIC32 or __PIC32MX__
+    interrupts(); 
+#else // AVR
     sei();
+#endif
 }
+
+#if defined(ARDUINO_ARCH_PIC32)  // or __PIC32 or PIC32 or __PIC32MX__
+
+static void xferSPI (byte data) {
+    SPI.transfer(data);
+}
+
+static byte readOp (byte op, byte address) {
+    enableChip();
+    xferSPI(op | (address & ADDR_MASK));
+    byte result = SPI.transfer(0x00);
+    if (address & 0x80)
+        result = SPI.transfer(0x00);
+
+    disableChip();
+    return result;
+}
+
+#else // AVR
 
 static void xferSPI (byte data) {
     SPDR = data;
@@ -273,12 +313,48 @@ static byte readOp (byte op, byte address) {
     return result;
 }
 
+#endif
+
 static void writeOp (byte op, byte address, byte data) {
     enableChip();
     xferSPI(op | (address & ADDR_MASK));
     xferSPI(data);
     disableChip();
 }
+
+#if defined(ARDUINO_ARCH_PIC32)  // or __PIC32 or PIC32 or __PIC32MX__
+
+static void readBuf(uint16_t len, byte* data) {
+    uint8_t nextbyte;
+
+    enableChip();
+    if (len != 0) {
+        xferSPI(ENC28J60_READ_BUF_MEM);
+
+        while (--len) {
+            nextbyte = SPI.transfer(0x00);
+            *data++ = nextbyte;
+        }
+        *data++ = SPI.transfer(0x00);
+    }
+    disableChip();
+}
+
+static void writeBuf(uint16_t len, const byte* data) {
+    enableChip();
+    if (len != 0) {
+        xferSPI(ENC28J60_WRITE_BUF_MEM);
+
+        SPI.transfer(*data++);
+        while (--len) {
+            uint8_t nextbyte = *data++;
+            SPI.transfer(nextbyte);
+     	};
+    }
+    disableChip();
+}
+
+#else  // AVR
 
 static void readBuf(uint16_t len, byte* data) {
     uint8_t nextbyte;
@@ -310,15 +386,17 @@ static void writeBuf(uint16_t len, const byte* data) {
         SPDR = *data++;
         while (--len) {
             uint8_t nextbyte = *data++;
-        	while (!(SPSR & (1<<SPIF)))
+          while (!(SPSR & (1<<SPIF)))
                 ;
             SPDR = nextbyte;
-     	};
+      };
         while (!(SPSR & (1<<SPIF)))
             ;
     }
     disableChip();
 }
+
+#endif
 
 static void SetBank (byte address) {
     if ((address & BANK_MASK) != Enc28j60Bank) {
@@ -365,7 +443,11 @@ static void writePhy (byte address, uint16_t data) {
 
 byte ENC28J60::initialize (uint16_t size, const byte* macaddr, byte csPin) {
     bufferSize = size;
+#if defined(ARDUINO_ARCH_PIC32)  // or __PIC32 or PIC32 or __PIC32MX__
+    if( !isInitialized )
+#else // AVR    
     if (bitRead(SPCR, SPE) == 0)
+#endif
         initSPI();
     selectPin = csPin;
     pinMode(selectPin, OUTPUT);
@@ -653,7 +735,11 @@ uint8_t ENC28J60::doBIST ( byte csPin) {
 #define RANDOM_RACE     0b1100
 
 // init
+#if defined(ARDUINO_ARCH_PIC32)  // or __PIC32 or PIC32 or __PIC32MX__
+    if( !isInitialized )
+#else // AVR
     if (bitRead(SPCR, SPE) == 0)
+#endif    
         initSPI();
     selectPin = csPin;
     pinMode(selectPin, OUTPUT);
